@@ -1,0 +1,6 @@
+Alembic migrations live in `alembic/versions/`.
+
+Run:
+
+- `alembic upgrade head`
+

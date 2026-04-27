@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Login</h2>
+    {% if error == "credentials" %}
+      <p class="msg">Invalid username or password.</p>
+    {% elif error == "github" %}
+      <p class="msg">GitHub sign-in failed. Try again.</p>
+    {% elif error == "github_state" %}
+      <p class="msg">GitHub sign-in state was invalid or expired.</p>
+    {% elif error == "github_config" %}
+      <p class="msg">GitHub OAuth is not configured (missing client id/secret).</p>
+    {% elif error == "created" %}
+      <p class="msg">Account created. You can sign in now.</p>
+    {% endif %}
+    <p class="muted">Use your username and password, or GitHub.</p>
+    <form method="post" action="/login" class="row">
+      <input name="username" placeholder="username" required autocomplete="username" />
+      <input type="password" name="password" placeholder="password" required autocomplete="current-password" />
+      <button type="submit">Login</button>
+    </form>
+    <p style="margin-top:14px;">
+      <a href="/auth/github/login">Sign in with GitHub</a>
+    </p>
+  </div>
+{% endblock %}

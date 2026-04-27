@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Your chats</h2>
+    <form method="post" action="/chats" class="row" style="margin-bottom:16px;">
+      <input name="title" placeholder="New chat title (optional)" style="flex:1; min-width:200px;" />
+      <button type="submit">New chat</button>
+    </form>
+    {% if chats|length == 0 %}
+      <p class="muted">No chats yet. Create one above.</p>
+    {% else %}
+      <ul>
+        {% for c in chats %}
+          <li><a href="/chats/{{ c.id }}">{{ c.title or ("Chat " ~ c.id) }}</a></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endblock %}

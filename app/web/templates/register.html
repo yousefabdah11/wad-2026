@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Register</h2>
+    {% if error == "taken" %}
+      <p class="msg">That username is already taken.</p>
+    {% elif error == "username" %}
+      <p class="msg">Username must be at least 2 characters.</p>
+    {% elif error == "password" %}
+      <p class="msg">Password must be at least 6 characters.</p>
+    {% endif %}
+    <form method="post" action="/register" class="row">
+      <input name="username" placeholder="username" required minlength="2" autocomplete="username" />
+      <input type="password" name="password" placeholder="password" required minlength="6" autocomplete="new-password" />
+      <button type="submit">Create account</button>
+    </form>
+    <p class="muted" style="margin-top:12px;">Already have an account? <a href="/login">Login</a></p>
+  </div>
+{% endblock %}

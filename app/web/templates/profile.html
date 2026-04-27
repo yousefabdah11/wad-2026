@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <h2>Profile</h2>
+    <p><strong>Username:</strong> {{ current_user.username or "—" }}</p>
+    <p><strong>User id:</strong> {{ current_user.id }}</p>
+    <h3 style="margin-top:18px;">Linked OAuth</h3>
+    {% if current_user.oauth_accounts|length == 0 %}
+      <p class="muted">No OAuth accounts linked.</p>
+    {% else %}
+      <ul>
+        {% for a in current_user.oauth_accounts %}
+          <li>{{ a.provider }} — {{ a.provider_login or a.provider_user_id }}{% if a.provider_email %} ({{ a.provider_email }}){% endif %}</li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+{% endblock %}

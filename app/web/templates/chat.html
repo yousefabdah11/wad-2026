@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card">
+    <p class="muted"><a href="/chats">&larr; All chats</a></p>
+    <h2>{{ chat.title or ("Chat " ~ chat.id) }}</h2>
+    <div class="bubble-list" id="history">
+      {% for m in messages %}
+        <div class="msg {{ m.role }}"><strong>{{ m.role }}</strong><div style="white-space:pre-wrap;">{{ m.content }}</div></div>
+      {% endfor %}
+    </div>
+    <div id="stream-live" class="msg assistant" style="display:none; margin-top:10px;">
+      <strong>assistant (streaming)</strong>
+      <div id="stream-out" style="white-space:pre-wrap;"></div>
+    </div>
+    <form id="chat-form" method="post" action="/chats/{{ chat.id }}/messages" style="margin-top:16px;">
+      <textarea id="msg-input" name="content" rows="4" style="width:100%; box-sizing:border-box;" placeholder="Message" required></textarea>
+      <div style="margin-top:10px;" class="row">
+        <button type="submit">Send</button>
+        <button type="button" id="btn-stream">Send (stream)</button>
+        <label class="muted" style="display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="auto-refresh" />
+          Auto-refresh page every 45s
+        </label>
+      </div>
+    </form>
+  </div>
+  <script>
+    (function () {
+      const chatId = {{ chat.id }};
+      const streamBox = document.getElementById("stream-live");
+      const streamOut = document.getElementById("stream-out");
+      const input = document.getElementById("msg-input");
+      const btnStream = document.getElementById("btn-stream");
+      const autoRefresh = document.getElementById("auto-refresh");
+      let refreshTimer = null;
+
+      autoRefresh.addEventListener("change", () => {
+        if (refreshTimer) clearInterval(refreshTimer);
+        refreshTimer = null;
+        if (autoRefresh.checked) {
+          refreshTimer = setInterval(() => location.reload(), 45000);
+        }
+      });
+
+      btnStream.addEventListener("click", async () => {
+        const text = (input.value || "").trim();
+        if (!text) return;
+        btnStream.disabled = true;
+        streamBox.style.display = "block";
+        streamOut.textContent = "";
+        const params = new URLSearchParams();
+        params.set("content", text);
+        try {
+          const res = await fetch("/chats/" + chatId + "/messages/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: params.toString(),
+            credentials: "same-origin",
+          });
+          if (!res.ok || !res.body) {
+            streamOut.textContent = "Stream failed (" + res.status + ").";
+            return;
+          }
+          const reader = res.body.getReader();
+          const dec = new TextDecoder();
+          let buf = "";
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let idx;
+            while ((idx = buf.indexOf("\n\n")) >= 0) {
+              const line = buf.slice(0, idx).trim();
+              buf = buf.slice(idx + 2);
+              if (!line.startsWith("data:")) continue;
+              const payload = line.slice(5).trim();
+              try {
+                const obj = JSON.parse(payload);
+                if (obj.token) streamOut.textContent += obj.token;
+                if (obj.done) {
+                  input.value = "";
+                  location.reload();
+                  return;
+                }
+                if (obj.error) {
+                  streamOut.textContent = "Error: " + obj.error;
+                  return;
+                }
+              } catch (e) {
+                /* ignore partial frames */
+              }
+            }
+          }
+        } catch (e) {
+          streamOut.textContent = "Network error.";
+        } finally {
+          btnStream.disabled = false;
+        }
+      });
+    })();
+  </script>
+{% endblock %}

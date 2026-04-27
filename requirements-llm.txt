@@ -1,0 +1,10 @@
+# Local LLM (pinned from homework requirements)
+#
+# NOTE: On Windows, `llama_cpp_python` typically requires a stable Python release
+# (recommend Python 3.12). If you are on a bleeding-edge Python (e.g. 3.14),
+# install Python 3.12 and recreate the venv.
+
+llama_cpp_python==0.3.20
+numpy==2.4.4
+typing_extensions==4.15.0
+

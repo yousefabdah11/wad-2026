@@ -1,0 +1,33 @@
+fastapi
+uvicorn[standard]
+
+# Templates / MVC UI
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+
+# DB + migrations
+SQLAlchemy
+alembic
+asyncpg
+
+# Auth
+PyJWT
+passlib[bcrypt]
+# passlib 1.7.4 breaks on bcrypt 5.x (backend init / 72-byte probe errors). Stay on bcrypt 4.x.
+bcrypt>=4.0.1,<5
+python-multipart
+
+# Redis
+redis
+
+# OAuth HTTP calls
+httpx
+
+# Env
+python-dotenv
+
+# Optional cache utility (pinned from homework)
+diskcache==5.6.3
+
+# Local LLM dependencies are in `requirements-llm.txt` (Python 3.12 recommended).
+
