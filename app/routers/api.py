@@ -1,24 +1,26 @@
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy.exc import IntegrityError
 
 from app.core.constants import REFRESH_TOKEN_COOKIE
 from app.models.chat import Chat
-from app.models.message import Message
 from app.models.user import User
-from app.services import refresh_tokens
-from app.services.auth_tokens import exchange_refresh_for_tokens, issue_tokens_for_user
-from app.services import chat_cache
-from app.services.chats import append_turn, create_chat, get_chat_for_user, list_chats_for_user
+from app.services import auth as auth_service
+from app.services.chats import (
+    ChatNotFoundError,
+    EmptyMessageError,
+    append_user_turn_and_list_payloads,
+    create_chat,
+    get_chat_for_user,
+    list_chats_for_user,
+    list_message_payloads_for_user,
+)
 from app.services.chat_stream import sse_chat_message_events
-from app.services.llm import generate_answer
-from app.services.users import create_password_user, verify_password_user
 from app.web.cookies import clear_auth_cookies, set_auth_cookies
 from app.web.deps import DbSession, get_current_user
 
@@ -74,14 +76,11 @@ class RegisterJsonBody(BaseModel):
     password: str
 
 
-async def _issue_tokens_or_none(
-    db: DbSession, *, username: str, password: str
-) -> tuple[User, str, str] | None:
-    user = await verify_password_user(db, username=username.strip(), password=password)
-    if not user:
-        return None
-    access, refresh = await issue_tokens_for_user(user)
-    return user, access, refresh
+_REGISTER_ERROR_DETAILS = {
+    "username": "Username too short",
+    "password": "Password too short",
+    "taken": "Username already exists",
+}
 
 
 @router.post("/auth/token", response_model=TokenOut)
@@ -92,41 +91,40 @@ async def auth_token_oauth2_form(
     """
     OAuth2-style password flow (same shape as `3-lesson/with-refresh`: POST form fields `username`, `password`).
     """
-    out = await _issue_tokens_or_none(db, username=form_data.username, password=form_data.password)
-    if not out:
+    tokens = await auth_service.issue_password_tokens(
+        db, username=form_data.username, password=form_data.password
+    )
+    if not tokens:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-    _, access, refresh = out
-    return TokenOut(access_token=access, refresh_token=refresh)
+    return TokenOut(access_token=tokens.access_token, refresh_token=tokens.refresh_token)
 
 
 @router.post("/auth/login", response_model=TokenOut)
 async def auth_login_json(db: DbSession, body: LoginJsonBody) -> TokenOut:
     """JSON login returning bearer access + opaque refresh (stored in Redis)."""
-    out = await _issue_tokens_or_none(db, username=body.username, password=body.password)
-    if not out:
+    tokens = await auth_service.issue_password_tokens(
+        db, username=body.username, password=body.password
+    )
+    if not tokens:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid username or password",
         )
-    _, access, refresh = out
-    return TokenOut(access_token=access, refresh_token=refresh)
+    return TokenOut(access_token=tokens.access_token, refresh_token=tokens.refresh_token)
 
 
 @router.post("/auth/register", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def auth_register_json(db: DbSession, body: RegisterJsonBody) -> User:
-    u = body.username.strip()
-    if len(u) < 2:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username too short")
-    if len(body.password) < 6:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password too short")
     try:
-        user = await create_password_user(db, username=u, password=body.password)
-    except IntegrityError:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username already exists")
-    return user
+        return await auth_service.register_password_user(
+            db, username=body.username, password=body.password
+        )
+    except auth_service.RegistrationError as exc:
+        detail = _REGISTER_ERROR_DETAILS.get(exc.code, "Invalid registration")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail) from exc
 
 
 @router.get("/me", response_model=UserOut)
@@ -145,12 +143,15 @@ async def api_refresh(
     ),
 ) -> TokenOut:
     rt = refresh_token or request.cookies.get(REFRESH_TOKEN_COOKIE)
-    rotated = await exchange_refresh_for_tokens(db, old_refresh=rt)
+    rotated = await auth_service.rotate_refresh_tokens(db, refresh_token=rt)
     if not rotated:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid refresh token")
-    _, new_at, new_rt = rotated
-    set_auth_cookies(response, access_token=new_at, refresh_token=new_rt)
-    return TokenOut(access_token=new_at, refresh_token=new_rt)
+    set_auth_cookies(
+        response,
+        access_token=rotated.access_token,
+        refresh_token=rotated.refresh_token,
+    )
+    return TokenOut(access_token=rotated.access_token, refresh_token=rotated.refresh_token)
 
 
 @router.post("/auth/logout")
@@ -163,7 +164,7 @@ async def api_logout(
     ),
 ) -> dict[str, bool]:
     rt = refresh_token or request.cookies.get(REFRESH_TOKEN_COOKIE)
-    await refresh_tokens.revoke_refresh_token(rt)
+    await auth_service.logout_refresh_token(rt)
     clear_auth_cookies(response)
     return {"ok": True}
 
@@ -202,21 +203,11 @@ async def api_list_messages(
     chat_id: int,
     db: DbSession,
     user: Annotated[User, Depends(get_current_user)],
-) -> list[MessageOut]:
-    cached = await chat_cache.get_cached_message_payloads(user_id=user.id, chat_id=chat_id)
-    if cached is not None:
-        return [MessageOut.model_validate(row) for row in cached]
-
-    chat = await get_chat_for_user(db, chat_id=chat_id, user_id=user.id)
-    if not chat:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
-    rows = [MessageOut.model_validate(m) for m in chat.messages]
-    await chat_cache.set_cached_message_payloads(
-        user_id=user.id,
-        chat_id=chat_id,
-        payloads=[r.model_dump() for r in rows],
-    )
-    return rows
+) -> list[dict[str, Any]]:
+    try:
+        return await list_message_payloads_for_user(db, user_id=user.id, chat_id=chat_id)
+    except ChatNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found") from exc
 
 
 @router.post("/chats/{chat_id}/messages", response_model=list[MessageOut])
@@ -225,18 +216,15 @@ async def api_post_message(
     db: DbSession,
     user: Annotated[User, Depends(get_current_user)],
     body: ChatMessageBody,
-) -> list[MessageOut]:
-    chat = await get_chat_for_user(db, chat_id=chat_id, user_id=user.id)
-    if not chat:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
-    text = body.content.strip()
-    if not text:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty message")
-    answer = generate_answer(text)
-    await append_turn(db, chat=chat, user_text=text, assistant_text=answer)
-    chat2 = await get_chat_for_user(db, chat_id=chat_id, user_id=user.id)
-    assert chat2 is not None
-    return [MessageOut.model_validate(m) for m in chat2.messages]
+) -> list[dict[str, Any]]:
+    try:
+        return await append_user_turn_and_list_payloads(
+            db, user_id=user.id, chat_id=chat_id, user_text=body.content
+        )
+    except ChatNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found") from exc
+    except EmptyMessageError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty message") from exc
 
 
 @router.post("/chats/{chat_id}/messages/stream", response_model=None)
@@ -246,14 +234,7 @@ async def api_post_message_stream(
     user: Annotated[User, Depends(get_current_user)],
     body: ChatMessageBody,
 ) -> StreamingResponse:
-    text = body.content.strip()
-    if not text:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty message")
-
-    async def gen():
-        async for chunk in sse_chat_message_events(
-            db, user_id=user.id, chat_id=chat_id, user_text=body.content
-        ):
-            yield chunk
-
-    return StreamingResponse(gen(), media_type="text/event-stream")
+    return StreamingResponse(
+        sse_chat_message_events(db, user_id=user.id, chat_id=chat_id, user_text=body.content),
+        media_type="text/event-stream",
+    )

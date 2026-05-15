@@ -5,6 +5,7 @@ import secrets
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.security import hash_password, verify_password
 from app.models.oauth_account import OAuthAccount
@@ -33,6 +34,11 @@ async def verify_password_user(db: AsyncSession, *, username: str, password: str
     if not user or not verify_password(password, user.password_hash):
         return None
     return user
+
+
+async def get_user_with_oauth_accounts(db: AsyncSession, *, user_id: int) -> User:
+    stmt = select(User).options(selectinload(User.oauth_accounts)).where(User.id == user_id)
+    return (await db.execute(stmt)).scalar_one()
 
 
 async def get_oauth_account(

@@ -1,6 +1,0 @@
-2026-04-17 19:34:12.687 +04 [10012] LOG:  starting PostgreSQL 16.13, compiled by Visual C++ build 1944, 64-bit
-2026-04-17 19:34:12.698 +04 [10012] LOG:  could not bind IPv6 address "::1": Permission denied
-2026-04-17 19:34:12.698 +04 [10012] LOG:  could not bind IPv4 address "127.0.0.1": Permission denied
-2026-04-17 19:34:12.699 +04 [10012] WARNING:  could not create listen socket for "localhost"
-2026-04-17 19:34:12.699 +04 [10012] FATAL:  could not create any TCP/IP sockets
-2026-04-17 19:34:12.706 +04 [10012] LOG:  database system is shut down

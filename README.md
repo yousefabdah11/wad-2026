@@ -49,9 +49,3 @@ alembic upgrade head
 uvicorn app.main:app --reload
 ```
 
-## Docs
-
-- `docs/setup-new-machine.md`: **end-to-end setup** on a new device (requirements, Postgres, Redis, `.env`, migrations)
-- `docs/local-setup-windows.md`: shorter Windows notes (Postgres/Redis/venv)
-- `docs/github-oauth-setup.md`: GitHub OAuth App setup + required env vars
-
